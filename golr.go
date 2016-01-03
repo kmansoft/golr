@@ -216,8 +216,6 @@ func main() {
 	for (state != exiting) {
 		if state == building {
 			// Building
-			fmt.Printf("Building...\n")
-
 			err = builder.build()
 			if err != nil {
 				fmt.Println("Build failed", err)
@@ -225,7 +223,7 @@ func main() {
 				runner.spawn()
 			}
 			state = running
-		} else if (state == running || state == killing) {
+		} else if state == running || state == killing {
 			// Running or killing
 			select {
 			default:
