@@ -1,7 +1,7 @@
 package main
 
 import (
-	"flag"
+	"gopkg.in/alecthomas/kingpin.v2"
 	"fmt"
 	"time"
 	"path/filepath"
@@ -21,23 +21,26 @@ func FatalError(msg string) {
 
 type strslice []string
 
-func (s *strslice) String() string {
-	return fmt.Sprintf("%s", *s)
-}
-
 func (s *strslice) Set(value string) error {
-	fmt.Printf("%s\n", value)
+	fmt.Printf("Append to strslice %s\n", value)
 	*s = append(*s, value)
 	return nil
 }
 
-type Flags struct {
-	root string
-	outfile string
-	dirs strslice	
+func (s *strslice) String() string {
+	return fmt.Sprintf("%s", *s)
 }
 
-var flags Flags
+func (i *strslice) IsCumulative() bool {
+	return true
+}
+
+func StrSlice(s kingpin.Settings) (target *strslice) {
+	fmt.Printf("New StrSlice\n")
+	target = new(strslice)
+	s.SetValue((*strslice)(target))
+	return target
+}
 
 /* ----- */
 
@@ -123,29 +126,32 @@ func (b *Builder) build() error {
 
 type Runner struct {
 	outfile string
+	args []string
 	pchan chan PStateErr
 	proc *os.Process
 }
 
-func NewRunner(outfile string, pchan chan PStateErr) *Runner {
+func NewRunner(outfile string, args []string, pchan chan PStateErr) *Runner {
 	r := Runner{}
 	r.outfile = outfile
+	r.args = args
 	r.pchan = pchan
 	r.proc = nil
 	return &r
 }
 
 func (r *Runner) spawn() error {
-	fmt.Printf("Starting %s\n", r.outfile)
-
 	argv := make([]string, 0, 10)
 	argv = append(argv, r.outfile)
+	argv = append(argv, r.args...)
 
 	attr := &os.ProcAttr{}
 	attr.Files = make([]*os.File, 0, 3)
 	attr.Files = append(attr.Files, os.Stdin)
 	attr.Files = append(attr.Files, os.Stdout)
 	attr.Files = append(attr.Files, os.Stderr)
+
+	fmt.Printf("Starting %s %s\n", r.outfile, argv[1:])
 
 	proc, err := os.StartProcess(r.outfile, argv, attr)
 	if err != nil {
@@ -181,18 +187,34 @@ const (
 )
 
 func main() {
-	flag.StringVar(&flags.root, "r", "", "Root directory for executable")
-	flag.StringVar(&flags.outfile, "o", "lr-bin", "Executable file")
-	flag.Var(&flags.dirs, "d", "Directory to watch")
+	var (
+		app = kingpin.New("golr", "A simple live reload tool for Go")
+		binfile = app.Flag("outfile", "Executable file").Short('o').Default("lr-bin").String()
+		dirs = app.Flag("dir", "Directory to watch").Short('d').Strings()
+		srcs = app.Arg("srcs", "Source files").Required().Strings()
+		args_this = os.Args[1:]
+		args_child = make([]string, 0)
+	)
 
-	flag.Parse()
+	for i, val := range args_this {
+		if val == "--" {
+			args_child = args_this[i+1:]
+			args_this = args_this[:i]
+			break
+		}
+	}
 
-	srcs := flag.Args()
-	if len(srcs) == 0 {
+	app.Parse(args_this)
+
+	if len(*srcs) == 0 {
 		FatalError("No source files")
 	}
 
-	outfile, err := filepath.Abs(flags.outfile)
+	if len(*binfile) == 0 {
+		FatalError("No output file")
+	}
+
+	outfile, err := filepath.Abs(*binfile)
 	if err != nil {
 		FatalError(err.Error())
 	}
@@ -203,13 +225,13 @@ func main() {
 	signal.Notify(cchan, os.Interrupt, os.Kill)
 
 	// Change scanner
-	scanner := NewScanner(srcs, nil)
+	scanner := NewScanner(*srcs, *dirs)
 
 	// Executable builder
-	builder := NewBuilder(outfile, srcs)
+	builder := NewBuilder(outfile, *srcs)
 
 	// Executable runner
-	runner := NewRunner(outfile, pchan)
+	runner := NewRunner(outfile, args_child, pchan)
 
 	// Event loop
 	state := building
