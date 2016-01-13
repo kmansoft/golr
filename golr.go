@@ -1,13 +1,13 @@
 package main
 
 import (
-	"gopkg.in/alecthomas/kingpin.v2"
 	"fmt"
 	"time"
 	"path/filepath"
 	"os"
 	"os/exec"
 	"os/signal"
+	"github.com/jessevdk/go-flags"
 )
 
 /* ----- */
@@ -15,31 +15,6 @@ import (
 func FatalError(msg string) {
 	fmt.Println("*** Error:", msg)
 	os.Exit(1)
-}
-
-/* ----- */
-
-type strslice []string
-
-func (s *strslice) Set(value string) error {
-	fmt.Printf("Append to strslice %s\n", value)
-	*s = append(*s, value)
-	return nil
-}
-
-func (s *strslice) String() string {
-	return fmt.Sprintf("%s", *s)
-}
-
-func (i *strslice) IsCumulative() bool {
-	return true
-}
-
-func StrSlice(s kingpin.Settings) (target *strslice) {
-	fmt.Printf("New StrSlice\n")
-	target = new(strslice)
-	s.SetValue((*strslice)(target))
-	return target
 }
 
 /* ----- */
@@ -186,15 +161,16 @@ const (
 	exiting = iota
 )
 
+/* ----- */
+
+type Flags struct {
+	OutFile string `short:"o" long:"outfile" description:"Executable file" default:"lr-bin"`
+	Dirs []string `short:"d" long:"dirs" description:"Directory to watch"`
+}
+
 func main() {
-	var (
-		app = kingpin.New("golr", "A simple live reload tool for Go")
-		binfile = app.Flag("outfile", "Executable file").Short('o').Default("lr-bin").String()
-		dirs = app.Flag("dir", "Directory to watch").Short('d').Strings()
-		srcs = app.Arg("srcs", "Source files").Required().Strings()
-		args_this = os.Args[1:]
-		args_child = make([]string, 0)
-	)
+	var args_this = os.Args[1:]
+	var args_child = make([]string, 0)
 
 	for i, val := range args_this {
 		if val == "--" {
@@ -204,17 +180,21 @@ func main() {
 		}
 	}
 
-	app.Parse(args_this)
+	var opts Flags
+	srcs, err := flags.ParseArgs(&opts, args_this)
+	if err != nil {
+		os.Exit(1)
+	}
 
-	if len(*srcs) == 0 {
+	if len(srcs) == 0 {
 		FatalError("No source files")
 	}
 
-	if len(*binfile) == 0 {
+	if len(opts.OutFile) == 0 {
 		FatalError("No output file")
 	}
 
-	outfile, err := filepath.Abs(*binfile)
+	outfile, err := filepath.Abs(opts.OutFile)
 	if err != nil {
 		FatalError(err.Error())
 	}
@@ -225,10 +205,10 @@ func main() {
 	signal.Notify(cchan, os.Interrupt, os.Kill)
 
 	// Change scanner
-	scanner := NewScanner(*srcs, *dirs)
+	scanner := NewScanner(srcs, opts.Dirs)
 
 	// Executable builder
-	builder := NewBuilder(outfile, *srcs)
+	builder := NewBuilder(outfile, srcs)
 
 	// Executable runner
 	runner := NewRunner(outfile, args_child, pchan)
